@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"regexp"
 )
 
 type fileInfo struct {
@@ -19,6 +20,48 @@ type fileInfo struct {
 	modTime time.Time
 	isDir   bool
 }
+
+var (
+	pathTraversalRegex = regexp.MustCompile(`(?:^|/)(?:\.\.(?:/|$))+`)
+	dangerousPatterns = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)(?:\.\.|%2e%2e|%252e%252e)`),
+		regexp.MustCompile(`(?i)(?:\.\.\/|%2e%2e%2f|%252e%252e%252f)`),
+		regexp.MustCompile(`(?i)(?:\.\.\\|%2e%2e%5c|%252e%252e%255c)`),
+		regexp.MustCompile(`(?i)(?:\.\.%00|%2e%2e%00|%252e%252e%00)`),
+		regexp.MustCompile(`(?i)(?:\.\.%2f|%2e%2e%2f|%252e%252e%252f)`),
+		regexp.MustCompile(`(?i)(?:\.\.%5c|%2e%2e%5c|%252e%252e%255c)`),
+		regexp.MustCompile(`(?i)(?:\.\.%3f|%2e%2e%3f|%252e%252e%253f)`),
+		regexp.MustCompile(`(?i)(?:\.\.%23|%2e%2e%23|%252e%252e%2523)`),
+		regexp.MustCompile(`(?i)(?:\.\.%26|%2e%2e%26|%252e%252e%2526)`),
+		regexp.MustCompile(`(?i)(?:\.\.%3d|%2e%2e%3d|%252e%252e%253d)`),
+		regexp.MustCompile(`(?i)(?:\.\.%2b|%2e%2e%2b|%252e%252e%252b)`),
+		regexp.MustCompile(`(?i)(?:\.\.%21|%2e%2e%21|%252e%252e%2521)`),
+		regexp.MustCompile(`(?i)(?:\.\.%40|%2e%2e%40|%252e%252e%2540)`),
+		regexp.MustCompile(`(?i)(?:\.\.%24|%2e%2e%24|%252e%252e%2524)`),
+		regexp.MustCompile(`(?i)(?:\.\.%25|%2e%2e%25|%252e%252e%2525)`),
+		regexp.MustCompile(`(?i)(?:\.\.%5e|%2e%2e%5e|%252e%252e%255e)`),
+		regexp.MustCompile(`(?i)(?:\.\.%26|%2e%2e%26|%252e%252e%2526)`),
+		regexp.MustCompile(`(?i)(?:\.\.%2a|%2e%2e%2a|%252e%252e%252a)`),
+		regexp.MustCompile(`(?i)(?:\.\.%28|%2e%2e%28|%252e%252e%2528)`),
+		regexp.MustCompile(`(?i)(?:\.\.%29|%2e%2e%29|%252e%252e%2529)`),
+		regexp.MustCompile(`(?i)(?:\.\.%7b|%2e%2e%7b|%252e%252e%257b)`),
+		regexp.MustCompile(`(?i)(?:\.\.%7d|%2e%2e%7d|%252e%252e%257d)`),
+		regexp.MustCompile(`(?i)(?:\.\.%5b|%2e%2e%5b|%252e%252e%255b)`),
+		regexp.MustCompile(`(?i)(?:\.\.%5d|%2e%2e%5d|%252e%252e%255d)`),
+		regexp.MustCompile(`(?i)(?:\.\.%7c|%2e%2e%7c|%252e%252e%257c)`),
+		regexp.MustCompile(`(?i)(?:\.\.%60|%2e%2e%60|%252e%252e%2560)`),
+		regexp.MustCompile(`(?i)(?:\.\.%27|%2e%2e%27|%252e%252e%2527)`),
+		regexp.MustCompile(`(?i)(?:\.\.%22|%2e%2e%22|%252e%252e%2522)`),
+		regexp.MustCompile(`(?i)(?:\.\.%3b|%2e%2e%3b|%252e%252e%253b)`),
+		regexp.MustCompile(`(?i)(?:\.\.%3a|%2e%2e%3a|%252e%252e%253a)`),
+		regexp.MustCompile(`(?i)(?:\.\.%3c|%2e%2e%3c|%252e%252e%253c)`),
+		regexp.MustCompile(`(?i)(?:\.\.%3e|%2e%2e%3e|%252e%252e%253e)`),
+		regexp.MustCompile(`(?i)(?:\.\.%3f|%2e%2e%3f|%252e%252e%253f)`),
+		regexp.MustCompile(`(?i)(?:\.\.%2f|%2e%2e%2f|%252e%252e%252f)`),
+		regexp.MustCompile(`(?i)(?:\.\.%5c|%2e%2e%5c|%252e%252e%255c)`),
+		regexp.MustCompile(`(?i)(?:\.\.%7e|%2e%2e%7e|%252e%252e%257e)`),
+	}
+)
 
 func getMimeType(path string) string {
 	ext := strings.TrimPrefix(filepath.Ext(path), ".")
@@ -71,6 +114,32 @@ func logError(r *http.Request, err error) {
 	)
 }
 
+func sanitizePath(path string) (string, error) {
+	path = strings.ReplaceAll(path, "\x00", "")
+	
+	if pathTraversalRegex.MatchString(path) {
+		return "", fmt.Errorf("path traversal attempt detected")
+	}
+
+	for _, pattern := range dangerousPatterns {
+		if pattern.MatchString(path) {
+			return "", fmt.Errorf("dangerous path pattern detected")
+		}
+	}
+
+	cleanPath := filepath.Clean(path)
+	
+	if strings.HasPrefix(cleanPath, "\\") || strings.HasPrefix(cleanPath, "/") {
+		cleanPath = strings.TrimPrefix(cleanPath, "/")
+	}
+
+	if strings.Contains(cleanPath, "\\") {
+		return "", fmt.Errorf("invalid path format")
+	}
+
+	return cleanPath, nil
+}
+
 func handleRequest(w http.ResponseWriter, r *http.Request) {
 	if !isAllowedMethod(r.Method) {
 		logAccess(r, 444, 0)
@@ -103,7 +172,35 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fullPath := filepath.Join(cfg.RootDir, path)
+	sanitizedPath, err := sanitizePath(path)
+	if err != nil {
+		logAccess(r, http.StatusBadRequest, 0)
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+
+	fullPath := filepath.Join(cfg.RootDir, sanitizedPath)
+	
+	absRoot, err := filepath.Abs(cfg.RootDir)
+	if err != nil {
+		logError(r, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	absPath, err := filepath.Abs(fullPath)
+	if err != nil {
+		logError(r, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	if !strings.HasPrefix(absPath, absRoot) {
+		logAccess(r, http.StatusForbidden, 0)
+		http.Error(w, "Access denied", http.StatusForbidden)
+		return
+	}
+
 	info, err := os.Stat(fullPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -164,7 +261,7 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 
 		var fileList []string
 		for _, f := range files {
-			fileURL := filepath.Join(path, f.name)
+			fileURL := filepath.Join(sanitizedPath, f.name)
 			fileInfo := fmt.Sprintf("<div class=\"file\"><a href=\"%s\" class=\"%s\">%s</a>", fileURL, map[bool]string{true: "dir", false: "file"}[f.isDir], f.name)
 
 			if cfg.Directory.ShowDirSize || cfg.Directory.ShowDirDate {
@@ -189,7 +286,7 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 			fileList = append(fileList, fileInfo)
 		}
 
-		content := fmt.Sprintf(defaultHTML, path, path, strings.Join(fileList, ""), Version)
+		content := fmt.Sprintf(defaultHTML, sanitizedPath, sanitizedPath, strings.Join(fileList, ""), Version)
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		setSecurityHeaders(w)
