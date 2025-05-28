@@ -35,6 +35,14 @@ type Config struct {
 			Enabled     bool
 			MaxRequests int
 			BanDuration time.Duration
+			AbuseIPDB   struct {
+				Enabled bool
+				APIKey  string
+				Score   int
+			}
+		}
+		Quotes struct {
+			Enabled bool
 		}
 	}
 
@@ -120,6 +128,14 @@ var cfg = Config{
 			Enabled     bool
 			MaxRequests int
 			BanDuration time.Duration
+			AbuseIPDB   struct {
+				Enabled bool
+				APIKey  string
+				Score   int
+			}
+		}
+		Quotes struct {
+			Enabled bool
 		}
 	}{
 		AllowBots:    false,
@@ -135,10 +151,29 @@ var cfg = Config{
 			Enabled     bool
 			MaxRequests int
 			BanDuration time.Duration
+			AbuseIPDB   struct {
+				Enabled bool
+				APIKey  string
+				Score   int
+			}
 		}{
 			Enabled:     true,
 			MaxRequests: 50,
 			BanDuration: 24 * time.Hour,
+			AbuseIPDB: struct {
+				Enabled bool
+				APIKey  string
+				Score   int
+			}{
+				Enabled: false,
+				APIKey:  "",
+				Score:   50,
+			},
+		},
+		Quotes: struct {
+			Enabled bool
+		}{
+			Enabled: true,
 		},
 	},
 

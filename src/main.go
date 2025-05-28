@@ -2,6 +2,7 @@ package main
 
 import (
 	"crypto/tls"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -14,6 +15,8 @@ import (
 	"sync"
 	"time"
 	"regexp"
+	"math/rand"
+	"rsc.io/quote"
 )
 
 type fileInfo struct {
@@ -28,6 +31,12 @@ type ipBanInfo struct {
 	lastRequest time.Time
 	banned      bool
 	banUntil    time.Time
+}
+
+type abuseIPDBResponse struct {
+	Data struct {
+		AbuseConfidenceScore int `json:"abuseConfidenceScore"`
+	} `json:"data"`
 }
 
 var (
@@ -74,6 +83,50 @@ var (
 	ipBanMutex sync.RWMutex
 )
 
+func checkAbuseIPDB(ip string) bool {
+	if !cfg.Security.IPBanList.AbuseIPDB.Enabled {
+		return false
+	}
+
+	url := fmt.Sprintf("https://api.abuseipdb.com/api/v2/check?ipAddress=%s", ip)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return false
+	}
+
+	req.Header.Set("Key", cfg.Security.IPBanList.AbuseIPDB.APIKey)
+	req.Header.Set("Accept", "application/json")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+
+	var result abuseIPDBResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return false
+	}
+
+	return result.Data.AbuseConfidenceScore >= cfg.Security.IPBanList.AbuseIPDB.Score
+}
+
+func getRandomQuote() string {
+	if !cfg.Security.Quotes.Enabled {
+		return ""
+	}
+
+	quotes := []func() string{
+		quote.Go,
+		quote.Glass,
+		quote.Hello,
+		quote.Opt,
+	}
+
+	return quotes[rand.Intn(len(quotes))]()
+}
+
 func checkIPBan(ip string) bool {
 	if !cfg.Security.IPBanList.Enabled {
 		return false
@@ -109,7 +162,7 @@ func checkIPBan(ip string) bool {
 	info.requests++
 	info.lastRequest = now
 
-	if info.requests > cfg.Security.IPBanList.MaxRequests {
+	if info.requests > cfg.Security.IPBanList.MaxRequests || checkAbuseIPDB(ip) {
 		info.banned = true
 		info.banUntil = now.Add(cfg.Security.IPBanList.BanDuration)
 		return true
@@ -393,6 +446,12 @@ func main() {
 		log.Fatal(err)
 	}
 
+	rand.Seed(time.Now().UnixNano())
+	quote := getRandomQuote()
+	if quote != "" {
+		fmt.Printf("\n%s\n\n", quote)
+	}
+
 	handler := http.HandlerFunc(handleRequest)
 
 	for _, port := range cfg.Ports {
@@ -402,11 +461,14 @@ func main() {
 				Handler:      handler,
 				ReadTimeout:  cfg.Timeout,
 				WriteTimeout: cfg.Timeout,
+				IdleTimeout:  cfg.Timeout,
 			}
 
 			if cfg.SSL.Enabled {
 				server.TLSConfig = &tls.Config{
 					MinVersion: tls.VersionTLS12,
+					CurvePreferences: []tls.CurveID{tls.CurveP521, tls.CurveP384, tls.CurveP256},
+					PreferServerCipherSuites: true,
 				}
 				fmt.Printf("Starting SSL server on port %s\n", port)
 				log.Fatal(server.ListenAndServeTLS(cfg.SSL.CertFile, cfg.SSL.KeyFile))
