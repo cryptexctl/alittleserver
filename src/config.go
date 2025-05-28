@@ -438,4 +438,5 @@ func setSecurityHeaders(w http.ResponseWriter) {
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Content-Security-Policy", "default-src 'self'")
+	w.Header().Set("Content-Type", "text/html; charset="+cfg.Charset)
 } 
