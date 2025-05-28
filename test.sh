@@ -2,18 +2,43 @@
 
 HOST=${1:-localhost}
 PORT=${2:-8888}
-
+#HOST="pablusha.ru"
+#PORT="80"
 echo "Testing dangerous user agents on $HOST:$PORT"
 
 test_ua() {
     local ua=$1
     local expected=$2
-    local response=$(curl -s -w "%{http_code}" -o /dev/null -H "User-Agent: $ua" "http://$HOST:$PORT/")
+    local response=$(curl -s -w "%{http_code}" -H "User-Agent: $ua" "http://$HOST:$PORT/")
+    local status=$(echo "$response" | tail -n1)
+    local body=$(echo "$response" | sed '$d')
     
-    if [ "$response" = "$expected" ]; then
-        echo "✅ $ua: $response"
+    if [ "$status" = "$expected" ]; then
+        echo "✅ $ua: $status"
+        if [ "$status" = "000" ]; then
+            echo "   Response: $body"
+        fi
     else
-        echo "❌ $ua: $response (expected $expected)"
+        echo "❌ $ua: $status (expected $expected)"
+        echo "   Response: $body"
+    fi
+}
+
+test_path() {
+    local path=$1
+    local expected=$2
+    local response=$(curl -s -w "%{http_code}" "http://$HOST:$PORT$path")
+    local status=$(echo "$response" | tail -n1)
+    local body=$(echo "$response" | sed '$d')
+    
+    if [ "$status" = "$expected" ]; then
+        echo "✅ $path: $status"
+        if [ "$status" = "000" ]; then
+            echo "   Response: $body"
+        fi
+    else
+        echo "❌ $path: $status (expected $expected)"
+        echo "   Response: $body"
     fi
 }
 
@@ -27,4 +52,14 @@ test_ua "Mozilla/5.0 (compatible; YandexBot/3.0; +http://yandex.com/bots)" "000"
 echo -e "\nTesting normal user agents (should return 200):"
 test_ua "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36" "200"
 test_ua "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" "200"
-test_ua "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36" "200" 
+test_ua "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36" "200"
+
+echo -e "\nTesting path traversal (should return 000):"
+test_path "/../../../../etc/passwd" "000"
+test_path "/%2e%2e/%2e%2e/%2e%2e/%2e%2e/etc/passwd" "000"
+test_path "/%252e%252e/%252e%252e/%252e%252e/%252e%252e/etc/passwd" "000"
+test_path "/..%252f..%252f..%252f..%252fetc/passwd" "000"
+test_path "/..%2f..%2f..%2f..%2fetc/passwd" "000"
+test_path "/..%5c..%5c..%5c..%5cetc/passwd" "000"
+test_path "/..%252f..%252f..%252f..%252fetc/passwd" "000"
+test_path "/..%252e%252e%252f..%252e%252e%252f..%252e%252e%252f..%252e%252e%252fetc/passwd" "000" 
