@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/tls"
 	"fmt"
 	"io"
 	"log"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 	"regexp"
 )
@@ -19,6 +21,13 @@ type fileInfo struct {
 	size    int64
 	modTime time.Time
 	isDir   bool
+}
+
+type ipBanInfo struct {
+	requests    int
+	lastRequest time.Time
+	banned      bool
+	banUntil    time.Time
 }
 
 var (
@@ -61,7 +70,53 @@ var (
 		regexp.MustCompile(`(?i)(?:\.\.%5c|%2e%2e%5c|%252e%252e%255c)`),
 		regexp.MustCompile(`(?i)(?:\.\.%7e|%2e%2e%7e|%252e%252e%257e)`),
 	}
+	ipBanMap = make(map[string]*ipBanInfo)
+	ipBanMutex sync.RWMutex
 )
+
+func checkIPBan(ip string) bool {
+	if !cfg.Security.IPBanList.Enabled {
+		return false
+	}
+
+	ipBanMutex.Lock()
+	defer ipBanMutex.Unlock()
+
+	now := time.Now()
+	info, exists := ipBanMap[ip]
+	
+	if !exists {
+		info = &ipBanInfo{
+			requests:    0,
+			lastRequest: now,
+		}
+		ipBanMap[ip] = info
+	}
+
+	if info.banned {
+		if now.After(info.banUntil) {
+			info.banned = false
+			info.requests = 0
+			return false
+		}
+		return true
+	}
+
+	if now.Sub(info.lastRequest) > time.Minute {
+		info.requests = 0
+	}
+
+	info.requests++
+	info.lastRequest = now
+
+	if info.requests > cfg.Security.IPBanList.MaxRequests {
+		info.banned = true
+		info.banUntil = now.Add(cfg.Security.IPBanList.BanDuration)
+		return true
+	}
+
+	return false
+}
 
 func getMimeType(path string) string {
 	ext := strings.TrimPrefix(filepath.Ext(path), ".")
@@ -141,6 +196,11 @@ func sanitizePath(path string) (string, error) {
 }
 
 func handleRequest(w http.ResponseWriter, r *http.Request) {
+	if checkIPBan(r.RemoteAddr) {
+		w.WriteHeader(http.StatusTeapot)
+		return
+	}
+
 	if !isAllowedMethod(r.Method) {
 		logAccess(r, 444, 0)
 		closeConnection(w)
@@ -330,13 +390,29 @@ func main() {
 		log.Fatal(err)
 	}
 
-	server := &http.Server{
-		Addr:         cfg.Port,
-		Handler:      http.HandlerFunc(handleRequest),
-		ReadTimeout:  cfg.Timeout,
-		WriteTimeout: cfg.Timeout,
+	handler := http.HandlerFunc(handleRequest)
+
+	for _, port := range cfg.Ports {
+		go func(port string) {
+			server := &http.Server{
+				Addr:         port,
+				Handler:      handler,
+				ReadTimeout:  cfg.Timeout,
+				WriteTimeout: cfg.Timeout,
+			}
+
+			if cfg.SSL.Enabled {
+				server.TLSConfig = &tls.Config{
+					MinVersion: tls.VersionTLS12,
+				}
+				fmt.Printf("Starting SSL server on port %s\n", port)
+				log.Fatal(server.ListenAndServeTLS(cfg.SSL.CertFile, cfg.SSL.KeyFile))
+			} else {
+				fmt.Printf("Starting server on port %s\n", port)
+				log.Fatal(server.ListenAndServe())
+			}
+		}(port)
 	}
 
-	fmt.Printf("Server starting on port %s\n", cfg.Port)
-	log.Fatal(server.ListenAndServe())
+	select {}
 } 

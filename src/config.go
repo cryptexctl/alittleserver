@@ -10,7 +10,12 @@ var Version string
 
 type Config struct {
 	Version  string
-	Port     string
+	Ports    []string
+	SSL      struct {
+		Enabled  bool
+		CertFile string
+		KeyFile  string
+	}
 	RootDir  string
 	MaxConns int
 	Timeout  time.Duration
@@ -25,6 +30,11 @@ type Config struct {
 		AllowTrace   bool
 		AllowConnect bool
 		AllowPatch   bool
+		IPBanList    struct {
+			Enabled     bool
+			MaxRequests int
+			BanDuration time.Duration
+		}
 	}
 
 	File struct {
@@ -80,7 +90,16 @@ const defaultHTML = `<!DOCTYPE html>
 
 var cfg = Config{
 	Version:  "dev",
-	Port:     ":8888",
+	Ports:    []string{":8888",":8889", ":8890"},
+	SSL: struct {
+		Enabled  bool
+		CertFile string
+		KeyFile  string
+	}{
+		Enabled:  false,
+		CertFile: "cert.pem",
+		KeyFile:  "key.pem",
+	},
 	RootDir:  "files",
 	MaxConns: 1000,
 	Timeout:  30 * time.Second,
@@ -95,6 +114,11 @@ var cfg = Config{
 		AllowTrace   bool
 		AllowConnect bool
 		AllowPatch   bool
+		IPBanList    struct {
+			Enabled     bool
+			MaxRequests int
+			BanDuration time.Duration
+		}
 	}{
 		AllowBots:    false,
 		AllowPost:    false,
@@ -105,6 +129,15 @@ var cfg = Config{
 		AllowTrace:   false,
 		AllowConnect: false,
 		AllowPatch:   false,
+		IPBanList: struct {
+			Enabled     bool
+			MaxRequests int
+			BanDuration time.Duration
+		}{
+			Enabled:     true,
+			MaxRequests: 50,
+			BanDuration: 24 * time.Hour,
+		},
 	},
 
 	File: struct {
