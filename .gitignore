@@ -16,3 +16,4 @@ vendor/
 Thumbs.db
 *.log
 files/ 
+test.sh

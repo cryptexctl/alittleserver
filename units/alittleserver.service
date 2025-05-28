@@ -1,0 +1,13 @@
+[Unit]
+Description=alittleserver - lightweight file server
+After=network.target
+
+[Service]
+Type=simple
+User=root
+Group=root
+WorkingDirectory=/opt/alittleserver
+ExecStart=/opt/alittleserver/alittleserver
+
+[Install]
+WantedBy=multi-user.target 

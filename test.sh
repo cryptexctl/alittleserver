@@ -2,8 +2,7 @@
 
 HOST=${1:-localhost}
 PORT=${2:-8888}
-#HOST="pablusha.ru"
-#PORT="80"
+
 echo "Testing dangerous user agents on $HOST:$PORT"
 
 test_ua() {
