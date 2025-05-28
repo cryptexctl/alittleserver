@@ -121,6 +121,9 @@ func checkIPBan(ip string) bool {
 func getMimeType(path string) string {
 	ext := strings.TrimPrefix(filepath.Ext(path), ".")
 	if mime, ok := cfg.MimeTypes[ext]; ok {
+		if strings.HasPrefix(mime, "text/") || strings.Contains(mime, "javascript") || strings.Contains(mime, "json") || strings.Contains(mime, "xml") {
+			return mime + "; charset=" + cfg.Charset
+		}
 		return mime
 	}
 	return "application/octet-stream"
@@ -383,6 +386,16 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logAccess(r, http.StatusOK, size)
+}
+
+func setSecurityHeaders(w http.ResponseWriter) {
+	w.Header().Set("Server", cfg.Headers.ServerName)
+	w.Header().Set("X-Frame-Options", cfg.Headers.XFrameOptions)
+	w.Header().Set("X-XSS-Protection", cfg.Headers.XSSProtection)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("Content-Security-Policy", "default-src 'self'")
+	w.Header().Set("Content-Type", "text/html; charset="+cfg.Charset)
 }
 
 func main() {

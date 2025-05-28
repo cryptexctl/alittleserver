@@ -32,7 +32,13 @@ Configuration:
      Security.IPBanList.MaxRequests = 50
      Security.IPBanList.BanDuration = 24 * time.Hour
 
-4. Security:
+4. Charset:
+   - Default: utf-8
+   - Edit in config.go:
+     Charset = "utf-8"
+   - Supported values: utf-8, windows-1251, iso-8859-1, etc
+
+5. Security:
    - Blocked paths: /admin, /.git, etc
    - Blocked user agents: bots, crawlers, etc
    - Allowed methods: GET by default
@@ -62,4 +68,5 @@ Features:
 - User agent filtering
 - Method filtering
 - MIME type detection
-- Access logging 
+- Access logging
+- Forced charset for text files 

@@ -19,6 +19,7 @@ type Config struct {
 	RootDir  string
 	MaxConns int
 	Timeout  time.Duration
+	Charset  string
 
 	Security struct {
 		AllowBots    bool
@@ -103,6 +104,7 @@ var cfg = Config{
 	RootDir:  "files",
 	MaxConns: 1000,
 	Timeout:  30 * time.Second,
+	Charset:  "utf-8",
 
 	Security: struct {
 		AllowBots    bool
