@@ -211,6 +211,7 @@ var cfg = Config{
 		"/Gemfile.lock",
 		"/.DS_Store",
 		"/Thumbs.db",
+		"/vv/",
 	},
 
 	BlockedUserAgents: []string{
