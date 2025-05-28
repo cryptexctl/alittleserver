@@ -295,6 +295,7 @@ var cfg = Config{
 		"axios",
 		"postman",
 		"insomnia",
+		"Mozilla/5.0; Keydrop.io/1.0(onlyscans.com/about)",
 	},
 
 	AllowedUserAgents: []string{
