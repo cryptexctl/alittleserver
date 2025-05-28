@@ -1,0 +1,65 @@
+alittleserver
+
+Simple and secure file server with multiple ports support, SSL and IP banlist.
+
+Installation:
+1. Install Go 1.16 or higher
+2. Clone repository:
+   git clone https://github.com/systemxplore/alittleserver.git
+3. Build:
+   cd alittleserver
+   go build -o alittleserver
+
+Configuration:
+1. Ports:
+   - Default: 8888, 8889, 8890
+   - Edit Ports array in config.go
+
+2. SSL:
+   - Generate certificates:
+     openssl req -x509 -newkey rsa:4096 -keyout key.pem -out cert.pem -days 365 -nodes
+   - Enable in config.go:
+     SSL.Enabled = true
+     SSL.CertFile = "cert.pem"
+     SSL.KeyFile = "key.pem"
+
+3. IP Banlist:
+   - Enabled by default
+   - Max requests: 50
+   - Ban duration: 24 hours
+   - Edit in config.go:
+     Security.IPBanList.Enabled = true
+     Security.IPBanList.MaxRequests = 50
+     Security.IPBanList.BanDuration = 24 * time.Hour
+
+4. Security:
+   - Blocked paths: /admin, /.git, etc
+   - Blocked user agents: bots, crawlers, etc
+   - Allowed methods: GET by default
+   - Max file size: 100MB
+   - Timeout: 30 seconds
+
+Usage:
+1. Create files directory:
+   mkdir files
+
+2. Start server:
+   ./alittleserver
+
+3. Access:
+   http://localhost:8888
+   http://localhost:8889
+   http://localhost:8890
+
+Features:
+- Multiple ports support
+- SSL/TLS support
+- IP banlist with 418 status
+- Directory listing
+- File size limits
+- Security headers
+- Path traversal protection
+- User agent filtering
+- Method filtering
+- MIME type detection
+- Access logging 
