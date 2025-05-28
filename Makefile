@@ -19,39 +19,39 @@ build-amd64: build-linux-amd64 build-darwin-amd64 build-windows-amd64
 
 build-linux-amd64:
 	@mkdir -p packages
-	GOOS=linux GOARCH=amd64 go build -ldflags="-X 'main.cfg.Version=$(VERSION)'" -o packages/alittleserver-linux-amd64 ./src
+	GOOS=linux GOARCH=amd64 go build -ldflags="-X 'main.Version=$(VERSION)'" -o packages/alittleserver-linux-amd64 ./src
 
 build-linux-arm64:
 	@mkdir -p packages
-	GOOS=linux GOARCH=arm64 go build -ldflags="-X 'main.cfg.Version=$(VERSION)'" -o packages/alittleserver-linux-arm64 ./src
+	GOOS=linux GOARCH=arm64 go build -ldflags="-X 'main.Version=$(VERSION)'" -o packages/alittleserver-linux-arm64 ./src
 
 build-linux-386:
 	@mkdir -p packages
-	GOOS=linux GOARCH=386 go build -ldflags="-X 'main.cfg.Version=$(VERSION)'" -o packages/alittleserver-linux-386 ./src
+	GOOS=linux GOARCH=386 go build -ldflags="-X 'main.Version=$(VERSION)'" -o packages/alittleserver-linux-386 ./src
 
 build-linux-arm:
 	@mkdir -p packages
-	GOOS=linux GOARCH=arm go build -ldflags="-X 'main.cfg.Version=$(VERSION)'" -o packages/alittleserver-linux-arm ./src
+	GOOS=linux GOARCH=arm go build -ldflags="-X 'main.Version=$(VERSION)'" -o packages/alittleserver-linux-arm ./src
 
 build-darwin-amd64:
 	@mkdir -p packages
-	GOOS=darwin GOARCH=amd64 go build -ldflags="-X 'main.cfg.Version=$(VERSION)'" -o packages/alittleserver-darwin-amd64 ./src
+	GOOS=darwin GOARCH=amd64 go build -ldflags="-X 'main.Version=$(VERSION)'" -o packages/alittleserver-darwin-amd64 ./src
 
 build-darwin-arm64:
 	@mkdir -p packages
-	GOOS=darwin GOARCH=arm64 go build -ldflags="-X 'main.cfg.Version=$(VERSION)'" -o packages/alittleserver-darwin-arm64 ./src
+	GOOS=darwin GOARCH=arm64 go build -ldflags="-X 'main.Version=$(VERSION)'" -o packages/alittleserver-darwin-arm64 ./src
 
 build-windows-amd64:
 	@mkdir -p packages
-	GOOS=windows GOARCH=amd64 go build -ldflags="-X 'main.cfg.Version=$(VERSION)'" -o packages/alittleserver-windows-amd64.exe ./src
+	GOOS=windows GOARCH=amd64 go build -ldflags="-X 'main.Version=$(VERSION)'" -o packages/alittleserver-windows-amd64.exe ./src
 
 build-windows-arm64:
 	@mkdir -p packages
-	GOOS=windows GOARCH=arm64 go build -ldflags="-X 'main.cfg.Version=$(VERSION)'" -o packages/alittleserver-windows-arm64.exe ./src
+	GOOS=windows GOARCH=arm64 go build -ldflags="-X 'main.Version=$(VERSION)'" -o packages/alittleserver-windows-arm64.exe ./src
 
 build-windows-386:
 	@mkdir -p packages
-	GOOS=windows GOARCH=386 go build -ldflags="-X 'main.cfg.Version=$(VERSION)'" -o packages/alittleserver-windows-386.exe ./src
+	GOOS=windows GOARCH=386 go build -ldflags="-X 'main.Version=$(VERSION)'" -o packages/alittleserver-windows-386.exe ./src
 
 clean:
 	@rm -rf packages/

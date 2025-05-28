@@ -189,7 +189,7 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 			fileList = append(fileList, fileInfo)
 		}
 
-		content := fmt.Sprintf(defaultHTML, path, path, strings.Join(fileList, ""), cfg.Version)
+		content := fmt.Sprintf(defaultHTML, path, path, strings.Join(fileList, ""), Version)
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		setSecurityHeaders(w)

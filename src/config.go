@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+var Version string
+
 type Config struct {
 	Version  string
 	Port     string
