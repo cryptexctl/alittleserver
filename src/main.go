@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"compress/gzip"
 	"crypto/tls"
 	"encoding/json"
@@ -96,6 +97,11 @@ var (
 	cacheMutex sync.RWMutex
 )
 
+const (
+	maxMimeCheckSize = 512
+	maxSymlinkDepth  = 10
+)
+
 func checkAbuseIPDB(ip string) bool {
 	if !cfg.Security.IPBanList.AbuseIPDB.Enabled {
 		return false
@@ -184,14 +190,109 @@ func checkIPBan(ip string) bool {
 	return false
 }
 
-func getMimeType(path string) string {
-	ext := strings.TrimPrefix(filepath.Ext(path), ".")
+func checkSymlinkLoop(path string) error {
+	visited := make(map[string]bool)
+	current := path
+	depth := 0
+
+	for depth < maxSymlinkDepth {
+		info, err := os.Lstat(current)
+		if err != nil {
+			return err
+		}
+
+		if (info.Mode() & os.ModeSymlink) == 0 {
+			return nil
+		}
+
+		if visited[current] {
+			return fmt.Errorf("symlink loop detected")
+		}
+		visited[current] = true
+
+		link, err := os.Readlink(current)
+		if err != nil {
+			return err
+		}
+
+		if !filepath.IsAbs(link) {
+			link = filepath.Join(filepath.Dir(current), link)
+		}
+		current = link
+		depth++
+	}
+
+	return fmt.Errorf("symlink depth exceeded")
+}
+
+func getMimeType(path string, content []byte) string {
+	if len(content) > maxMimeCheckSize {
+		content = content[:maxMimeCheckSize]
+	}
+
+	if len(content) > 0 {
+		switch {
+		case bytes.HasPrefix(content, []byte{0xFF, 0xD8, 0xFF}):
+			return "image/jpeg"
+		case bytes.HasPrefix(content, []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}):
+			return "image/png"
+		case bytes.HasPrefix(content, []byte{0x47, 0x49, 0x46, 0x38}):
+			return "image/gif"
+		case bytes.HasPrefix(content, []byte{0x00, 0x00, 0x01, 0x00}):
+			if len(content) >= 6 && content[4] == 0x01 && content[5] == 0x00 {
+				return "image/x-icon"
+			}
+		case bytes.HasPrefix(content, []byte{0x3C, 0x3F, 0x78, 0x6D, 0x6C}):
+			return "application/xml"
+		case bytes.HasPrefix(content, []byte{0x7B, 0x22}):
+			return "application/json"
+		case bytes.HasPrefix(content, []byte{0x25, 0x50, 0x44, 0x46}):
+			return "application/pdf"
+		case bytes.HasPrefix(content, []byte{0x50, 0x4B, 0x03, 0x04}):
+			return "application/zip"
+		case bytes.HasPrefix(content, []byte{0x1F, 0x8B, 0x08}):
+			return "application/gzip"
+		case bytes.HasPrefix(content, []byte{0x42, 0x5A, 0x68}):
+			return "application/x-bzip2"
+		case bytes.HasPrefix(content, []byte{0x52, 0x61, 0x72, 0x21, 0x1A, 0x07}):
+			return "application/x-rar-compressed"
+		case bytes.HasPrefix(content, []byte{0x49, 0x44, 0x33}):
+			return "audio/mpeg"
+		case bytes.HasPrefix(content, []byte{0x00, 0x00, 0x01, 0xBA}):
+			return "video/mpeg"
+		case bytes.HasPrefix(content, []byte{0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x6D, 0x70, 0x34, 0x32}):
+			return "video/mp4"
+		case bytes.HasPrefix(content, []byte{0x52, 0x49, 0x46, 0x46}):
+			if len(content) > 8 && bytes.Equal(content[8:12], []byte{0x57, 0x41, 0x56, 0x45}) {
+				return "audio/wav"
+			}
+			if len(content) > 8 && bytes.Equal(content[8:12], []byte{0x41, 0x56, 0x49, 0x20}) {
+				return "video/x-msvideo"
+			}
+		}
+	}
+
+	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(path), "."))
 	if mime, ok := cfg.MimeTypes[ext]; ok {
 		if strings.HasPrefix(mime, "text/") || strings.Contains(mime, "javascript") || strings.Contains(mime, "json") || strings.Contains(mime, "xml") {
 			return mime + "; charset=" + cfg.Charset
 		}
 		return mime
 	}
+
+	if len(content) > 0 {
+		isText := true
+		for _, b := range content {
+			if b == 0 || (b < 32 && b != 9 && b != 10 && b != 13) {
+				isText = false
+				break
+			}
+		}
+		if isText {
+			return "text/plain; charset=" + cfg.Charset
+		}
+	}
+
 	return "application/octet-stream"
 }
 
@@ -330,6 +431,12 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := checkSymlinkLoop(fullPath); err != nil {
+		logAccess(r, http.StatusForbidden, 0)
+		http.Error(w, "Access denied", http.StatusForbidden)
+		return
+	}
+
 	info, err := os.Stat(fullPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -436,13 +543,13 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check cache
 	cacheMutex.RLock()
 	cached, ok := fileCache[fullPath]
 	cacheMutex.RUnlock()
 
 	if ok {
-		w.Header().Set("Content-Type", getMimeType(fullPath))
+		mimeType := getMimeType(fullPath, cached)
+		w.Header().Set("Content-Type", mimeType)
 		setSecurityHeaders(w)
 		w.Header().Set("Cache-Control", "public, max-age=31536000")
 		w.Header().Set("ETag", fmt.Sprintf("\"%x\"", info.ModTime().UnixNano()))
@@ -466,17 +573,22 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cache file
 	cacheMutex.Lock()
 	fileCache[fullPath] = content
 	cacheMutex.Unlock()
 
-	w.Header().Set("Content-Type", getMimeType(fullPath))
+	mimeType := getMimeType(fullPath, content)
+	w.Header().Set("Content-Type", mimeType)
 	setSecurityHeaders(w)
 	w.Header().Set("Cache-Control", "public, max-age=31536000")
 	w.Header().Set("ETag", fmt.Sprintf("\"%x\"", info.ModTime().UnixNano()))
 
-	// Check if client accepts gzip
+	if strings.HasSuffix(fullPath, ".ico") {
+		fmt.Printf("ICO file detected: %s\n", fullPath)
+		fmt.Printf("MIME type: %s\n", mimeType)
+		fmt.Printf("First bytes: % x\n", content[:min(16, len(content))])
+	}
+
 	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
 		w.Header().Set("Content-Encoding", "gzip")
 		gz := gzip.NewWriter(w)
@@ -487,6 +599,13 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	logAccess(r, http.StatusOK, int64(len(content)))
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func main() {
