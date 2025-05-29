@@ -230,11 +230,9 @@ func getMimeType(path string, content []byte) string {
 		content = content[:maxMimeCheckSize]
 	}
 
-	// Определяем MIME-тип по содержимому
-	mime := mimetype.Detect(content)
+	mtype := mimetype.Detect(content)
 
-	// Если не удалось определить по содержимому, пробуем по расширению
-	if mime.Is("application/octet-stream") {
+	if mtype.Is("application/octet-stream") {
 		ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(path), "."))
 		if mimeType, ok := cfg.MimeTypes[ext]; ok {
 			if strings.HasPrefix(mimeType, "text/") || strings.Contains(mimeType, "javascript") || strings.Contains(mimeType, "json") || strings.Contains(mimeType, "xml") {
@@ -244,12 +242,11 @@ func getMimeType(path string, content []byte) string {
 		}
 	}
 
-	// Для текстовых типов добавляем charset
-	if strings.HasPrefix(mime.String(), "text/") || strings.Contains(mime.String(), "javascript") || strings.Contains(mime.String(), "json") || strings.Contains(mime.String(), "xml") {
-		return mime.String() + "; charset=" + cfg.Charset
+	if strings.HasPrefix(mtype.String(), "text/") || strings.Contains(mtype.String(), "javascript") || strings.Contains(mtype.String(), "json") || strings.Contains(mtype.String(), "xml") {
+		return mtype.String() + "; charset=" + cfg.Charset
 	}
 
-	return mime.String()
+	return mtype.String()
 }
 
 func closeConnection(w http.ResponseWriter) {
@@ -485,76 +482,120 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(content))
 		logAccess(r, http.StatusOK, int64(len(content)))
 		return
-	}
+	} else {
+		if !cfg.File.AllowSymlinks && (info.Mode()&os.ModeSymlink) != 0 {
+			logAccess(r, 444, 0)
+			closeConnection(w)
+			return
+		}
 
-	if !cfg.File.AllowSymlinks && (info.Mode()&os.ModeSymlink) != 0 {
-		logAccess(r, 444, 0)
-		closeConnection(w)
-		return
-	}
+		if info.Size() > cfg.File.MaxFileSize {
+			logAccess(r, http.StatusRequestEntityTooLarge, 0)
+			http.Error(w, "File too large", http.StatusRequestEntityTooLarge)
+			return
+		}
 
-	if info.Size() > cfg.File.MaxFileSize {
-		logAccess(r, http.StatusRequestEntityTooLarge, 0)
-		http.Error(w, "File too large", http.StatusRequestEntityTooLarge)
-		return
-	}
+		cacheMutex.RLock()
+		cached, ok := fileCache[fullPath]
+		cacheMutex.RUnlock()
 
-	cacheMutex.RLock()
-	cached, ok := fileCache[fullPath]
-	cacheMutex.RUnlock()
+		if ok {
+			mimeType := getMimeType(fullPath, cached)
+			w.Header().Set("Content-Type", mimeType)
+			setSecurityHeaders(w)
+			w.Header().Set("Cache-Control", "public, max-age=31536000")
+			w.Header().Set("ETag", fmt.Sprintf("\"%x\"", info.ModTime().UnixNano()))
+			w.Write(cached)
+			logAccess(r, http.StatusOK, int64(len(cached)))
+			return
+		}
 
-	if ok {
-		mimeType := getMimeType(fullPath, cached)
-		w.Header().Set("Content-Type", mimeType)
+		if info.Size() > maxMimeCheckSize {
+			mtype, err := mimetype.DetectFile(fullPath)
+			if err == nil {
+				w.Header().Set("Content-Type", mtype.String())
+			} else {
+				w.Header().Set("Content-Type", getMimeType(fullPath, nil))
+			}
+		} else {
+			file, err := os.Open(fullPath)
+			if err != nil {
+				logError(r, err)
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+				return
+			}
+			defer file.Close()
+
+			content, err := io.ReadAll(file)
+			if err != nil {
+				logError(r, err)
+				http.Error(w, "Internal server error", http.StatusInternalServerError)
+				return
+			}
+
+			cacheMutex.Lock()
+			fileCache[fullPath] = content
+			cacheMutex.Unlock()
+
+			w.Header().Set("Content-Type", getMimeType(fullPath, content))
+		}
+
 		setSecurityHeaders(w)
 		w.Header().Set("Cache-Control", "public, max-age=31536000")
 		w.Header().Set("ETag", fmt.Sprintf("\"%x\"", info.ModTime().UnixNano()))
-		w.Write(cached)
-		logAccess(r, http.StatusOK, int64(len(cached)))
-		return
+
+		if strings.HasSuffix(fullPath, ".ico") {
+			fmt.Printf("ICO file detected: %s\n", fullPath)
+			fmt.Printf("MIME type: %s\n", w.Header().Get("Content-Type"))
+			if ok {
+				fmt.Printf("First bytes: % x\n", cached[:min(16, len(cached))])
+			} else {
+				file, err := os.Open(fullPath)
+				if err == nil {
+					defer file.Close()
+					buf := make([]byte, 16)
+					n, _ := file.Read(buf)
+					fmt.Printf("First bytes: % x\n", buf[:n])
+				}
+			}
+		}
+
+		if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			w.Header().Set("Content-Encoding", "gzip")
+			gz := gzip.NewWriter(w)
+			defer gz.Close()
+
+			if ok {
+				gz.Write(cached)
+			} else {
+				file, err := os.Open(fullPath)
+				if err != nil {
+					logError(r, err)
+					http.Error(w, "Internal server error", http.StatusInternalServerError)
+					return
+				}
+				defer file.Close()
+
+				io.Copy(gz, file)
+			}
+		} else {
+			if ok {
+				w.Write(cached)
+			} else {
+				file, err := os.Open(fullPath)
+				if err != nil {
+					logError(r, err)
+					http.Error(w, "Internal server error", http.StatusInternalServerError)
+					return
+				}
+				defer file.Close()
+
+				io.Copy(w, file)
+			}
+		}
+
+		logAccess(r, http.StatusOK, info.Size())
 	}
-
-	file, err := os.Open(fullPath)
-	if err != nil {
-		logError(r, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-	defer file.Close()
-
-	content, err := io.ReadAll(file)
-	if err != nil {
-		logError(r, err)
-		http.Error(w, "Internal server error", http.StatusInternalServerError)
-		return
-	}
-
-	cacheMutex.Lock()
-	fileCache[fullPath] = content
-	cacheMutex.Unlock()
-
-	mimeType := getMimeType(fullPath, content)
-	w.Header().Set("Content-Type", mimeType)
-	setSecurityHeaders(w)
-	w.Header().Set("Cache-Control", "public, max-age=31536000")
-	w.Header().Set("ETag", fmt.Sprintf("\"%x\"", info.ModTime().UnixNano()))
-
-	if strings.HasSuffix(fullPath, ".ico") {
-		fmt.Printf("ICO file detected: %s\n", fullPath)
-		fmt.Printf("MIME type: %s\n", mimeType)
-		fmt.Printf("First bytes: % x\n", content[:min(16, len(content))])
-	}
-
-	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
-		w.Header().Set("Content-Encoding", "gzip")
-		gz := gzip.NewWriter(w)
-		defer gz.Close()
-		gz.Write(content)
-	} else {
-		w.Write(content)
-	}
-
-	logAccess(r, http.StatusOK, int64(len(content)))
 }
 
 func min(a, b int) int {
