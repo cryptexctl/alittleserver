@@ -232,7 +232,7 @@ func getMimeType(path string, content []byte) string {
 
 	if len(content) > 0 {
 		switch {
-		case bytes.HasPrefix(content, []byte{0xFF, 0xD8, 0xFF}):
+		case bytes.HasPrefix(content, []byte{0xFF, 0xD8, 0xFF, 0xE0}) || bytes.HasPrefix(content, []byte{0xFF, 0xD8, 0xFF, 0xE1}):
 			return "image/jpeg"
 		case bytes.HasPrefix(content, []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}):
 			return "image/png"
