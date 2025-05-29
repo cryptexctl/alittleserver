@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"compress/gzip"
 	"crypto/tls"
 	"encoding/json"
@@ -19,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gabriel-vasile/mimetype"
 	"rsc.io/quote"
 )
 
@@ -230,70 +230,26 @@ func getMimeType(path string, content []byte) string {
 		content = content[:maxMimeCheckSize]
 	}
 
-	if len(content) > 0 {
-		switch {
-		case bytes.HasPrefix(content, []byte{0xFF, 0xD8, 0xFF, 0xE0}) || bytes.HasPrefix(content, []byte{0xFF, 0xD8, 0xFF, 0xE1}):
-			return "image/jpeg"
-		case bytes.HasPrefix(content, []byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A}):
-			return "image/png"
-		case bytes.HasPrefix(content, []byte{0x47, 0x49, 0x46, 0x38}):
-			return "image/gif"
-		case bytes.HasPrefix(content, []byte{0x00, 0x00, 0x01, 0x00}):
-			if len(content) >= 6 && content[4] == 0x01 && content[5] == 0x00 {
-				return "image/x-icon"
+	// Определяем MIME-тип по содержимому
+	mime := mimetype.Detect(content)
+
+	// Если не удалось определить по содержимому, пробуем по расширению
+	if mime.Is("application/octet-stream") {
+		ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(path), "."))
+		if mimeType, ok := cfg.MimeTypes[ext]; ok {
+			if strings.HasPrefix(mimeType, "text/") || strings.Contains(mimeType, "javascript") || strings.Contains(mimeType, "json") || strings.Contains(mimeType, "xml") {
+				return mimeType + "; charset=" + cfg.Charset
 			}
-		case bytes.HasPrefix(content, []byte{0x3C, 0x3F, 0x78, 0x6D, 0x6C}):
-			return "application/xml"
-		case bytes.HasPrefix(content, []byte{0x7B, 0x22}):
-			return "application/json"
-		case bytes.HasPrefix(content, []byte{0x25, 0x50, 0x44, 0x46}):
-			return "application/pdf"
-		case bytes.HasPrefix(content, []byte{0x50, 0x4B, 0x03, 0x04}):
-			return "application/zip"
-		case bytes.HasPrefix(content, []byte{0x1F, 0x8B, 0x08}):
-			return "application/gzip"
-		case bytes.HasPrefix(content, []byte{0x42, 0x5A, 0x68}):
-			return "application/x-bzip2"
-		case bytes.HasPrefix(content, []byte{0x52, 0x61, 0x72, 0x21, 0x1A, 0x07}):
-			return "application/x-rar-compressed"
-		case bytes.HasPrefix(content, []byte{0x49, 0x44, 0x33}):
-			return "audio/mpeg"
-		case bytes.HasPrefix(content, []byte{0x00, 0x00, 0x01, 0xBA}):
-			return "video/mpeg"
-		case bytes.HasPrefix(content, []byte{0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x6D, 0x70, 0x34, 0x32}):
-			return "video/mp4"
-		case bytes.HasPrefix(content, []byte{0x52, 0x49, 0x46, 0x46}):
-			if len(content) > 8 && bytes.Equal(content[8:12], []byte{0x57, 0x41, 0x56, 0x45}) {
-				return "audio/wav"
-			}
-			if len(content) > 8 && bytes.Equal(content[8:12], []byte{0x41, 0x56, 0x49, 0x20}) {
-				return "video/x-msvideo"
-			}
+			return mimeType
 		}
 	}
 
-	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(path), "."))
-	if mime, ok := cfg.MimeTypes[ext]; ok {
-		if strings.HasPrefix(mime, "text/") || strings.Contains(mime, "javascript") || strings.Contains(mime, "json") || strings.Contains(mime, "xml") {
-			return mime + "; charset=" + cfg.Charset
-		}
-		return mime
+	// Для текстовых типов добавляем charset
+	if strings.HasPrefix(mime.String(), "text/") || strings.Contains(mime.String(), "javascript") || strings.Contains(mime.String(), "json") || strings.Contains(mime.String(), "xml") {
+		return mime.String() + "; charset=" + cfg.Charset
 	}
 
-	if len(content) > 0 {
-		isText := true
-		for _, b := range content {
-			if b == 0 || (b < 32 && b != 9 && b != 10 && b != 13) {
-				isText = false
-				break
-			}
-		}
-		if isText {
-			return "text/plain; charset=" + cfg.Charset
-		}
-	}
-
-	return "application/octet-stream"
+	return mime.String()
 }
 
 func closeConnection(w http.ResponseWriter) {
