@@ -231,13 +231,10 @@ func getMimeType(path string, content []byte) string {
 	}
 
 	mtype := mimetype.Detect(content)
+	ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(path), "."))
 
 	if mtype.Is("application/octet-stream") {
-		ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(path), "."))
 		if mimeType, ok := cfg.MimeTypes[ext]; ok {
-			if strings.HasPrefix(mimeType, "text/") || strings.Contains(mimeType, "javascript") || strings.Contains(mimeType, "json") || strings.Contains(mimeType, "xml") {
-				return mimeType + "; charset=" + cfg.Charset
-			}
 			return mimeType
 		}
 	}
@@ -544,23 +541,14 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "public, max-age=31536000")
 		w.Header().Set("ETag", fmt.Sprintf("\"%x\"", info.ModTime().UnixNano()))
 
-		if strings.HasSuffix(fullPath, ".ico") {
-			fmt.Printf("ICO file detected: %s\n", fullPath)
-			fmt.Printf("MIME type: %s\n", w.Header().Get("Content-Type"))
-			if ok {
-				fmt.Printf("First bytes: % x\n", cached[:min(16, len(cached))])
-			} else {
-				file, err := os.Open(fullPath)
-				if err == nil {
-					defer file.Close()
-					buf := make([]byte, 16)
-					n, _ := file.Read(buf)
-					fmt.Printf("First bytes: % x\n", buf[:n])
-				}
-			}
-		}
+		mimeType := w.Header().Get("Content-Type")
+		shouldCompress := strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") &&
+			(strings.HasPrefix(mimeType, "text/") ||
+				strings.Contains(mimeType, "javascript") ||
+				strings.Contains(mimeType, "json") ||
+				strings.Contains(mimeType, "xml"))
 
-		if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+		if shouldCompress {
 			w.Header().Set("Content-Encoding", "gzip")
 			gz := gzip.NewWriter(w)
 			defer gz.Close()
