@@ -1,21 +1,23 @@
 package main
 
 import (
+	"compress/gzip"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"time"
-	"regexp"
-	"math/rand"
+
 	"rsc.io/quote"
 )
 
@@ -39,9 +41,18 @@ type abuseIPDBResponse struct {
 	} `json:"data"`
 }
 
+type gzipResponseWriter struct {
+	io.Writer
+	http.ResponseWriter
+}
+
+func (w gzipResponseWriter) Write(b []byte) (int, error) {
+	return w.Writer.Write(b)
+}
+
 var (
 	pathTraversalRegex = regexp.MustCompile(`(?:^|/)(?:\.\.(?:/|$))+`)
-	dangerousPatterns = []*regexp.Regexp{
+	dangerousPatterns  = []*regexp.Regexp{
 		regexp.MustCompile(`(?i)(?:\.\.|%2e%2e|%252e%252e)`),
 		regexp.MustCompile(`(?i)(?:\.\.\/|%2e%2e%2f|%252e%252e%252f)`),
 		regexp.MustCompile(`(?i)(?:\.\.\\|%2e%2e%5c|%252e%252e%255c)`),
@@ -79,8 +90,10 @@ var (
 		regexp.MustCompile(`(?i)(?:\.\.%5c|%2e%2e%5c|%252e%252e%255c)`),
 		regexp.MustCompile(`(?i)(?:\.\.%7e|%2e%2e%7e|%252e%252e%257e)`),
 	}
-	ipBanMap = make(map[string]*ipBanInfo)
+	ipBanMap   = make(map[string]*ipBanInfo)
 	ipBanMutex sync.RWMutex
+	fileCache  = make(map[string][]byte)
+	cacheMutex sync.RWMutex
 )
 
 func checkAbuseIPDB(ip string) bool {
@@ -137,7 +150,7 @@ func checkIPBan(ip string) bool {
 
 	now := time.Now()
 	info, exists := ipBanMap[ip]
-	
+
 	if !exists {
 		info = &ipBanInfo{
 			requests:    0,
@@ -227,7 +240,7 @@ func logError(r *http.Request, err error) {
 
 func sanitizePath(path string) (string, error) {
 	path = strings.ReplaceAll(path, "\x00", "")
-	
+
 	if pathTraversalRegex.MatchString(path) {
 		return "", fmt.Errorf("path traversal attempt detected")
 	}
@@ -239,7 +252,7 @@ func sanitizePath(path string) (string, error) {
 	}
 
 	cleanPath := filepath.Clean(path)
-	
+
 	if strings.HasPrefix(cleanPath, "\\") || strings.HasPrefix(cleanPath, "/") {
 		cleanPath = strings.TrimPrefix(cleanPath, "/")
 	}
@@ -296,7 +309,7 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	fullPath := filepath.Join(cfg.RootDir, sanitizedPath)
-	
+
 	absRoot, err := filepath.Abs(cfg.RootDir)
 	if err != nil {
 		logError(r, err)
@@ -423,6 +436,21 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check cache
+	cacheMutex.RLock()
+	cached, ok := fileCache[fullPath]
+	cacheMutex.RUnlock()
+
+	if ok {
+		w.Header().Set("Content-Type", getMimeType(fullPath))
+		setSecurityHeaders(w)
+		w.Header().Set("Cache-Control", "public, max-age=31536000")
+		w.Header().Set("ETag", fmt.Sprintf("\"%x\"", info.ModTime().UnixNano()))
+		w.Write(cached)
+		logAccess(r, http.StatusOK, int64(len(cached)))
+		return
+	}
+
 	file, err := os.Open(fullPath)
 	if err != nil {
 		logError(r, err)
@@ -431,14 +459,34 @@ func handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	w.Header().Set("Content-Type", getMimeType(fullPath))
-	setSecurityHeaders(w)
-	size, err := io.Copy(w, file)
+	content, err := io.ReadAll(file)
 	if err != nil {
 		logError(r, err)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
 		return
 	}
-	logAccess(r, http.StatusOK, size)
+
+	// Cache file
+	cacheMutex.Lock()
+	fileCache[fullPath] = content
+	cacheMutex.Unlock()
+
+	w.Header().Set("Content-Type", getMimeType(fullPath))
+	setSecurityHeaders(w)
+	w.Header().Set("Cache-Control", "public, max-age=31536000")
+	w.Header().Set("ETag", fmt.Sprintf("\"%x\"", info.ModTime().UnixNano()))
+
+	// Check if client accepts gzip
+	if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+		w.Header().Set("Content-Encoding", "gzip")
+		gz := gzip.NewWriter(w)
+		defer gz.Close()
+		gz.Write(content)
+	} else {
+		w.Write(content)
+	}
+
+	logAccess(r, http.StatusOK, int64(len(content)))
 }
 
 func main() {
@@ -466,8 +514,8 @@ func main() {
 
 			if cfg.SSL.Enabled {
 				server.TLSConfig = &tls.Config{
-					MinVersion: tls.VersionTLS12,
-					CurvePreferences: []tls.CurveID{tls.CurveP521, tls.CurveP384, tls.CurveP256},
+					MinVersion:               tls.VersionTLS12,
+					CurvePreferences:         []tls.CurveID{tls.CurveP521, tls.CurveP384, tls.CurveP256},
 					PreferServerCipherSuites: true,
 				}
 				fmt.Printf("Starting SSL server on port %s\n", port)
@@ -480,4 +528,4 @@ func main() {
 	}
 
 	select {}
-} 
+}
